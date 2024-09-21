@@ -1,0 +1,184 @@
+import cv2
+import numpy as np
+import pygame as pg
+import customtkinter as ctk
+from PIL import Image
+from ultralytics import YOLO
+
+
+# SETTINGS.
+PATH_AUDIO = r"audio\warning.wav"
+PATH_MODEL = r"model\model.pt"  # YOLOV10/N/LAST/80.
+
+
+class ControlFrame(ctk.CTkFrame):
+    def __init__(self, parent, webc_control, conf_control, path_control):
+        super().__init__(master=parent, fg_color="transparent")
+        self.pack(padx=20, pady=20)
+        # DATA.
+        self.webc_control = webc_control
+        self.conf_control = conf_control
+        self.path_control = path_control
+        self.webc_control.trace_add("write", self.update_device_switch)
+        # WIDGET.
+        self.device_switch = ctk.CTkSwitch(
+            master=self,
+            text="Video",
+            font=("Rockwell Condensed", 18),
+            variable=webc_control,
+        )
+        self.device_switch.pack(side=ctk.LEFT, padx=10)
+
+        self.upload_button = ctk.CTkButton(
+            master=self,
+            height=40,
+            cursor="hand2",
+            text="Upload Video",
+            font=("Cambria", 16, "bold", "italic"),
+            command=self.upload_video,
+        )
+        self.upload_button.pack(side=ctk.LEFT)
+
+        self.confidence_label = ctk.CTkLabel(
+            master=self,
+            width=125,
+            text=f"Confidence ({self.conf_control.get():.0%})",
+            font=("Rockwell Condensed", 18),
+        )
+        self.confidence_label.pack(side=ctk.LEFT, padx=10)
+
+        ctk.CTkSlider(
+            master=self, variable=conf_control, command=self.update_confidence_label
+        ).pack(side=ctk.LEFT)
+
+    def update_device_switch(self, *args):
+        if self.webc_control.get():
+            self.path_control.set("")
+            self.upload_button.configure(state=ctk.DISABLED)
+            self.device_switch.configure(text="Webcam")
+        else:
+            self.upload_button.configure(state=ctk.NORMAL)
+            self.device_switch.configure(text="Video")
+
+    def update_confidence_label(self, *args):
+        self.confidence_label.configure(
+            text=f"Confidence ({self.conf_control.get():.0%})"
+        )
+
+    def upload_video(self):
+        path = ctk.filedialog.askopenfilename(
+            title="Select a video file", filetypes=[("Video", "*.mp4")]
+        )
+        self.path_control.set(path)
+
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__(fg_color="black")
+        ctk.set_appearance_mode("dark")
+        # SETUP.
+        self.geometry("980x680")
+        self.resizable(False, False)
+        self.title("")
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        # DATA.
+        self.on_load()
+        self.webc_control = ctk.BooleanVar(value=False)
+        self.conf_control = ctk.DoubleVar(value=0.5)
+        self.path_control = ctk.StringVar()
+        self.webc_control.trace_add("write", self.update_device)
+        self.path_control.trace_add("write", self.update_device)
+        # WIDGET.
+        self.screen = ctk.CTkLabel(self, text="")
+        self.screen.pack(expand=ctk.TRUE, fill=ctk.BOTH, padx=20, pady=20)
+        ControlFrame(self, self.webc_control, self.conf_control, self.path_control)
+
+    def on_load(self):
+        # AUDIO.
+        pg.mixer.init(channels=1)
+        self.channel = pg.mixer.Channel(0)
+        self.audio = pg.mixer.Sound(PATH_AUDIO)
+        self.audio.set_volume(0.25)
+        # MODEL.
+        self.model = YOLO(PATH_MODEL)
+        # CAMERA.
+        self.camera = None
+        self.event_id = None
+
+    def on_close(self):
+        if self.camera:
+            self.camera.release()
+        self.destroy()
+
+    def update_device(self, *args):
+        # RELEASE RESOURCES.
+        if self.camera:
+            self.camera.release()
+            self.off_screen(self.screen)
+            self.after_cancel(self.event_id)
+        # CHANGE DEVICE MODE.
+        if self.webc_control.get():
+            self.camera = cv2.VideoCapture(0)
+            self.event_id = self.after(10, self.update_frame)
+        else:
+            if path := self.path_control.get():
+                self.camera = cv2.VideoCapture(path)
+                self.event_id = self.after(10, self.update_frame)
+
+    def update_frame(self):
+        ret, frame = self.camera.read()
+        if ret:
+            # DETECT FRAME.
+            frame = self.detect_frame(frame)
+            # CONVERT TO PIL MODE.
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # CREATE PIL IMAGE.
+            image = Image.fromarray(frame)
+            # CREATE CTK IMAGE.
+            image_ctk = ctk.CTkImage(image, size=(900, 560))
+            # CHANGE IMAGE DISPLAY.
+            self.screen.configure(image=image_ctk)
+        self.event_id = self.after(10, self.update_frame)
+
+    def detect_frame(self, frame):
+        result = self.model.predict(
+            source=frame, conf=self.conf_control.get(), verbose=False
+        )[0]
+        boxes = result.boxes.xyxy
+
+        if len(boxes) > 0:
+            confs = result.boxes.conf
+            for box, conf in zip(boxes, confs):
+                t, l, r, b = map(int, box.tolist())
+                # DRAW BOUNDING BOX.
+                cv2.rectangle(
+                    img=frame,
+                    pt1=(t, l),
+                    pt2=(r, b),
+                    color=(0, 75, 255),
+                    thickness=2,
+                )
+                # DRAW PROBABILITY.
+                cv2.putText(
+                    img=frame,
+                    text=f"{conf:.2f}",
+                    org=(t, l - 10),
+                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                    fontScale=0.5,
+                    color=(0, 75, 255),
+                )
+            # PLAY WARNING SOUND.
+            if not self.channel.get_busy():
+                self.channel = self.audio.play()
+        return frame
+
+    @staticmethod
+    def off_screen(screen):
+        black_frame = np.zeros((560, 900, 3), dtype=np.uint8)
+        black_image = Image.fromarray(black_frame)
+        black_image_ctk = ctk.CTkImage(black_image, size=(900, 560))
+        screen.configure(image=black_image_ctk)
+
+
+if __name__ == "__main__":
+    App().mainloop()
