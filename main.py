@@ -23,7 +23,8 @@ class ControlFrame(ctk.CTkFrame):
         # WIDGET.
         self.device_switch = ctk.CTkSwitch(
             master=self,
-            text="Video",
+            width=150,
+            text="Image/Video",
             font=("Rockwell Condensed", 18),
             variable=webc_control,
         )
@@ -33,9 +34,9 @@ class ControlFrame(ctk.CTkFrame):
             master=self,
             height=40,
             cursor="hand2",
-            text="Upload Video",
+            text="Upload File",
             font=("Cambria", 16, "bold", "italic"),
-            command=self.upload_video,
+            command=self.upload_file,
         )
         self.upload_button.pack(side=ctk.LEFT)
 
@@ -58,16 +59,17 @@ class ControlFrame(ctk.CTkFrame):
             self.device_switch.configure(text="Webcam")
         else:
             self.upload_button.configure(state=ctk.NORMAL)
-            self.device_switch.configure(text="Video")
+            self.device_switch.configure(text="Image/Video")
 
     def update_confidence_label(self, *args):
         self.confidence_label.configure(
             text=f"Confidence ({self.conf_control.get():.0%})"
         )
 
-    def upload_video(self):
+    def upload_file(self):
         path = ctk.filedialog.askopenfilename(
-            title="Select a video file", filetypes=[("Video", "*.mp4")]
+            title="Select an image or a video file",
+            filetypes=[("Image & Video", "*jpg *png *.mp4")],
         )
         self.path_control.set(path)
 
@@ -122,27 +124,34 @@ class App(ctk.CTk):
             self.event_id = self.after(10, self.update_frame)
         else:
             if path := self.path_control.get():
-                self.camera = cv2.VideoCapture(path)
-                self.event_id = self.after(10, self.update_frame)
+                if path.endswith(("jpg", "png")):
+                    image = cv2.imread(path)
+                    self.display_image(image)
+                else:
+                    self.camera = cv2.VideoCapture(path)
+                    self.event_id = self.after(10, self.update_frame)
+
+    def display_image(self, image):
+        # DETECT IMAGE.
+        image = self.detect_image(image)
+        # CONVERT TO PIL MODE.
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # CREATE PIL IMAGE.
+        image = Image.fromarray(image)
+        # CREATE CTK IMAGE.
+        image = ctk.CTkImage(image, size=(900, 560))
+        # CHANGE IMAGE DISPLAY.
+        self.screen.configure(image=image)
 
     def update_frame(self):
         ret, frame = self.camera.read()
         if ret:
-            # DETECT FRAME.
-            frame = self.detect_frame(frame)
-            # CONVERT TO PIL MODE.
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # CREATE PIL IMAGE.
-            image = Image.fromarray(frame)
-            # CREATE CTK IMAGE.
-            image_ctk = ctk.CTkImage(image, size=(900, 560))
-            # CHANGE IMAGE DISPLAY.
-            self.screen.configure(image=image_ctk)
+            self.display_image(frame)
         self.event_id = self.after(10, self.update_frame)
 
-    def detect_frame(self, frame):
+    def detect_image(self, image):
         result = self.model.predict(
-            source=frame, conf=self.conf_control.get(), verbose=False
+            source=image, conf=self.conf_control.get(), verbose=False
         )[0]
         boxes = result.boxes.xyxy
 
@@ -152,7 +161,7 @@ class App(ctk.CTk):
                 t, l, r, b = map(int, box.tolist())
                 # DRAW BOUNDING BOX.
                 cv2.rectangle(
-                    img=frame,
+                    img=image,
                     pt1=(t, l),
                     pt2=(r, b),
                     color=(0, 75, 255),
@@ -160,7 +169,7 @@ class App(ctk.CTk):
                 )
                 # DRAW PROBABILITY.
                 cv2.putText(
-                    img=frame,
+                    img=image,
                     text=f"{conf:.2f}",
                     org=(t, l - 10),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX,
@@ -170,7 +179,7 @@ class App(ctk.CTk):
             # PLAY WARNING SOUND.
             if not self.channel.get_busy():
                 self.channel = self.audio.play()
-        return frame
+        return image
 
     @staticmethod
     def off_screen(screen):
