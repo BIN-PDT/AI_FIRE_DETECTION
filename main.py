@@ -156,15 +156,17 @@ class App(ctk.CTk):
         boxes = result.boxes.xyxy
 
         if len(boxes) > 0:
+            clses = result.boxes.cls
             confs = result.boxes.conf
-            for box, conf in zip(boxes, confs):
+            for box, cls, conf in zip(boxes, clses, confs):
                 t, l, r, b = map(int, box.tolist())
+                color = (0, 75, 255) if int(cls.tolist()) == 0 else (80, 80, 80)
                 # DRAW BOUNDING BOX.
                 cv2.rectangle(
                     img=image,
                     pt1=(t, l),
                     pt2=(r, b),
-                    color=(0, 75, 255),
+                    color=color,
                     thickness=2,
                 )
                 # DRAW PROBABILITY.
@@ -174,7 +176,7 @@ class App(ctk.CTk):
                     org=(t, l - 10),
                     fontFace=cv2.FONT_HERSHEY_SIMPLEX,
                     fontScale=0.5,
-                    color=(0, 75, 255),
+                    color=color,
                 )
             # PLAY WARNING SOUND.
             if not self.channel.get_busy():
