@@ -8,7 +8,7 @@ from ultralytics import YOLO
 
 # SETTINGS.
 PATH_AUDIO = r"audio\warning.wav"
-PATH_MODEL = r"model\model.pt"  # YOLOV10/N/LAST/85.
+PATH_MODEL = r"model\model.pt"  # YOLOV10/N/LAST/86.
 
 
 class ControlFrame(ctk.CTkFrame):
